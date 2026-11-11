@@ -1,35 +1,37 @@
 # git-janitor
 
-`git-janitor` finds the Git repos under a directory, tells you which ones have uncommitted or unpushed work, and deletes branches you no longer need.
+Finds every Git repo under a directory, shows which ones have uncommitted or unpushed work, and cleans up branches that have already been merged.
 
 ```
 $ git janitor scan ~/code
-REPO             BRANCH               STATUS    UNPUSHED   STALE
-────────────────────────────────────────────────────────────────
-api              main                 clean            0       2
-work/dashboard   feature/charts       2 dirty          3       0
-work/infra       (detached 8450cc3)   clean            -       0
-3 repos, stale = no commits in 30+ days
+REPO           BRANCH               STATUS    UNPUSHED   STALE
+──────────────────────────────────────────────────────────────
+api            main                 clean            1       2
+dotfiles       main                 clean            -       0
+work/billing   invoice-pdf          2 dirty          3       0
+work/site      (detached 4903fac)   clean            -       0
+4 repos, stale = no commits in 30+ days
 
-$ git janitor sweep ~/code
+$ git janitor sweep ~/code --fetch
 api
-  merged-fix  merged
-  old-spike   stale (101 days, unmerged)
+  docs/typos         merged
+  fix/retry-timeout  squash-merged
+  spike/grpc         stale (119 days, unmerged)
 
-Dry run: 1 merged, 1 stale. Re-run with --force to delete.
+Dry run: 2 merged, 1 unmerged. Re-run with --force to delete.
 ```
 
-`UNPUSHED` shows `-` when the current branch has no upstream.
+`-` under UNPUSHED means the branch has no upstream to compare against.
 
 ## Install
 
-Requires Python 3.10+ and `git` on your `PATH`.
+Needs Python 3.10+ and `git`.
 
 ```sh
 pipx install git+https://github.com/ledermandaniel4-svg/Git-Janitor
 ```
 
-From a local checkout, for development:
+Or from a checkout:
 
 ```sh
 git clone https://github.com/ledermandaniel4-svg/Git-Janitor
@@ -37,29 +39,38 @@ cd Git-Janitor
 pip install -e '.[dev]'
 ```
 
-Both install a `git-janitor` executable. Git picks up any `git-*` command on your `PATH`, so `git janitor` works too.
+This installs a `git-janitor` command. Git runs anything named `git-*` on your `PATH` as a subcommand, so `git janitor` works as well.
 
 ## Usage
 
 ```sh
-git janitor scan                 # repos under the current directory, up to 3 levels deep
+git janitor scan                  # current directory, 3 levels deep
 git janitor scan ~/code --days 60
-git janitor scan ~/code --json   # for scripts and jq
+git janitor scan ~/code --json | jq '.[] | select(.dirty > 0) | .name'
 
-git janitor sweep ~/code         # dry run: list what would be deleted
-git janitor sweep ~/code --force # delete, after asking
+git janitor sweep ~/code          # dry run
+git janitor sweep ~/code --fetch  # fetch --prune each repo first
+git janitor sweep ~/code --force  # actually delete, asks first
 ```
 
-`scan` skips `node_modules`, `.venv` and hidden directories, and doesn't look inside a repo for nested repos.
+`scan` skips `node_modules`, `.venv` and dot-directories. It stops at the first repo it finds on a path, so submodules and nested repos aren't listed separately.
 
-`sweep` picks up local branches that are either merged into `main` (or `master`) or have had no commits for `--days` days (default 30). It never touches `main`, `master`, `develop` or the branch you have checked out.
+### What sweep deletes
 
-With `--force` (alias `--yes`) it asks twice:
+A local branch is a candidate if it's:
 
-1. Delete merged branches with `git branch -d`.
-2. Force-delete unmerged stale branches with `git branch -D`. This defaults to no, since those commits exist nowhere else unless you pushed them.
+- **merged**: an ancestor of `main` (or `master`)
+- **squash-merged**: its changes are already on `main` as a squash or rebase merge, which is what GitHub's "Squash and merge" and "Rebase and merge" buttons produce
+- **remote branch deleted**: its upstream is gone, usually because the PR was closed
+- **stale**: no commits in `--days` days (default 30)
 
-If `git branch -d` refuses a branch (for example, it's merged into `main` but you're on another branch that doesn't contain it), the branch is skipped and the command exits with status 1.
+`main`, `master`, `develop` and whatever you have checked out are never touched.
+
+Merges are checked against both your local `main` and `origin/main`. If you merge PRs on GitHub and don't pull often, use `--fetch` so `origin/main` is current.
+
+`--force` (or `--yes`) asks up to three questions: merged branches go through `git branch -d`, squash-merged ones need `git branch -D` because Git can't see them as merged, and unmerged ones (stale or remote deleted) also need `-D`. All three default to no. Answer no to the last one unless you're sure, since those commits may not exist anywhere else.
+
+Squash detection compares patches, so a branch that kept getting commits after it was squash-merged won't match and is left alone. It'll show up as stale eventually.
 
 ## License
 

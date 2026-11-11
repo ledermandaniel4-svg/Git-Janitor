@@ -10,6 +10,7 @@ from .models import Branch, RepoStatus
 
 SKIP_DIRS = {"node_modules", ".venv", "venv", "__pycache__"}
 BASE_BRANCHES = ("main", "master")
+PROTECTED = frozenset({"main", "master", "develop"})
 
 
 def git(repo: Path, *args: str) -> str | None:
@@ -72,28 +73,44 @@ def base_branch(repo: Path) -> str | None:
     return None
 
 
-def merged_branches(repo: Path, base: str | None) -> set[str]:
+def base_refs(repo: Path) -> list[str]:
+    # Check origin/main too: after a fetch it can be ahead of a local main nobody pulled.
+    base = base_branch(repo)
     if base is None:
-        return set()
-    out = git(repo, "branch", "--merged", base, "--format=%(refname:short)")
+        return []
+    refs = [base]
+    if git(repo, "rev-parse", "--verify", "-q", f"refs/remotes/origin/{base}") is not None:
+        refs.append(f"origin/{base}")
+    return refs
+
+
+def merged_into(repo: Path, ref: str) -> set[str]:
+    out = git(repo, "branch", "--merged", ref, "--format=%(refname:short)")
     return set(out.splitlines()) if out else set()
 
 
 def list_branches(repo: Path) -> list[Branch]:
-    out = git(repo, "for-each-ref", "--format=%(refname:short)%00%(committerdate:unix)", "refs/heads")
+    fmt = "%(refname:short)%00%(committerdate:unix)%00%(upstream:track)"
+    out = git(repo, "for-each-ref", f"--format={fmt}", "refs/heads")
     if not out:
         return []  # no commits yet
-    merged = merged_branches(repo, base_branch(repo))
+    merged = set().union(*(merged_into(repo, ref) for ref in base_refs(repo)))
     branches = []
     for line in out.splitlines():
-        name, _, ts = line.partition("\0")
-        when = datetime.fromtimestamp(int(ts), tz=timezone.utc)
-        branches.append(Branch(name=name, last_commit=when, merged=name in merged))
+        name, ts, track = line.split("\0")
+        branches.append(
+            Branch(
+                name=name,
+                last_commit=datetime.fromtimestamp(int(ts), tz=timezone.utc),
+                merged=name in merged,
+                gone=track == "[gone]",
+            )
+        )
     return branches
 
 
-def stale_branches(branches: list[Branch], days: int, now: datetime, skip: str = "") -> list[Branch]:
-    return [b for b in branches if b.name != skip and b.age_days(now) >= days]
+def stale_branches(branches: list[Branch], days: int, now: datetime, skip: set[str]) -> list[Branch]:
+    return [b for b in branches if b.name not in skip and b.age_days(now) >= days]
 
 
 def display_name(repo: Path, root: Path) -> str:
@@ -106,7 +123,7 @@ def display_name(repo: Path, root: Path) -> str:
 def inspect(repo: Path, root: Path, days: int = 30, now: datetime | None = None) -> RepoStatus:
     now = now or datetime.now(timezone.utc)
     branch = current_branch(repo)
-    stale = stale_branches(list_branches(repo), days, now, skip=branch)
+    stale = stale_branches(list_branches(repo), days, now, skip=PROTECTED | {branch})
     return RepoStatus(
         name=display_name(repo, root),
         path=repo,

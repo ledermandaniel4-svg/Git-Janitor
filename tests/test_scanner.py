@@ -1,4 +1,4 @@
-from conftest import commit, run
+from gitutil import commit, run
 
 from git_janitor.scanner import find_repos, scan
 
@@ -89,3 +89,13 @@ def test_repo_without_commits(tmp_path, make_repo):
     assert status.branch == "main"
     assert status.stale == []
     assert status.unpushed is None
+
+
+def test_protected_branches_never_stale(tmp_path, make_repo):
+    repo = make_repo()
+    run(repo, "branch", "develop")
+    run(repo, "checkout", "-q", "-b", "old")
+
+    [status] = scan(tmp_path)
+
+    assert status.stale == []

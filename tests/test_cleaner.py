@@ -1,6 +1,6 @@
 import json
 
-from conftest import commit, run
+from gitutil import commit, run
 from typer.testing import CliRunner
 
 from git_janitor.cleaner import candidates

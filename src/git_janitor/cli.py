@@ -9,7 +9,7 @@ from rich.console import Console
 from rich.table import Table
 
 from . import __version__
-from .cleaner import candidates, delete
+from .cleaner import candidates, delete, fetch
 from .models import RepoStatus, SweepCandidate
 from .scanner import display_name, find_repos, scan as scan_repos
 
@@ -74,7 +74,7 @@ def scan(
         return
     if not repos:
         err.print(f"[dim]No Git repositories found under {path}[/]")
-        raise typer.Exit(1)
+        return
     console.print(render_table(repos))
     console.print(f"[dim]{len(repos)} repos, stale = no commits in {days}+ days[/]")
 
@@ -83,26 +83,38 @@ def count_branches(n: int, kind: str) -> str:
     return f"{n} {kind} branch" + ("" if n == 1 else "es")
 
 
+NOTES = {
+    "merged": "[green]merged[/]",
+    "squashed": "[green]squash-merged[/]",
+    "gone": "[yellow]remote branch deleted[/] [dim](unmerged)[/]",
+}
+
+Plan = list[tuple[Path, str, SweepCandidate]]
+
+
 def print_candidates(name: str, found: list[SweepCandidate]) -> None:
     console.print(f"[bold]{name}[/]")
     width = max(len(c.branch.name) for c in found)
     for c in found:
-        if c.reason == "merged":
-            note = "[green]merged[/]"
-        else:
-            note = f"[yellow]stale[/] [dim]({c.age} days, unmerged)[/]"
+        note = NOTES.get(c.reason, f"[yellow]stale[/] [dim]({c.age} days, unmerged)[/]")
         console.print(f"  {c.branch.name:<{width}}  {note}")
 
 
-def run_deletes(batch: list[tuple[Path, SweepCandidate]], force: bool) -> int:
+def run_deletes(batch: Plan, force: bool) -> int:
     failed = 0
-    for repo, c in batch:
+    for repo, name, c in batch:
         if delete(repo, c, force=force):
-            console.print(f"  [red]deleted[/] {c.branch.name} [dim]{repo.name}[/]")
+            console.print(f"  [red]deleted[/] {c.branch.name} [dim]{name}[/]")
         else:
             failed += 1
-            err.print(f"  [yellow]skipped[/] {c.branch.name} [dim]{repo.name}: git refused to delete it[/]")
+            err.print(f"  [yellow]skipped[/] {c.branch.name} [dim]{name}: git refused to delete it[/]")
     return failed
+
+
+def confirm_and_delete(batch: Plan, question: str, force: bool) -> int:
+    if batch and typer.confirm(question):
+        return run_deletes(batch, force)
+    return 0
 
 
 @app.command()
@@ -110,36 +122,44 @@ def sweep(
     path: Path = PathArg,
     days: int = DaysOpt,
     force: bool = typer.Option(False, "--force", "--yes", "-y", help="Actually delete branches (asks first)."),
+    fetch_first: bool = typer.Option(False, "--fetch", help="Run git fetch --prune in each repo first."),
 ) -> None:
     """Find merged and stale branches under PATH. Dry run unless --force is given."""
-    plan: list[tuple[Path, SweepCandidate]] = []
+    plan: Plan = []
     for repo in find_repos(path):
+        name = display_name(repo, path)
+        if fetch_first and not fetch(repo):
+            err.print(f"[yellow]fetch failed[/] [dim]{name}, using local state[/]")
         found = candidates(repo, days)
         if found:
-            print_candidates(display_name(repo, path), found)
-            plan.extend((repo, c) for c in found)
+            print_candidates(name, found)
+            plan.extend((repo, name, c) for c in found)
 
     if not plan:
         console.print("[dim]Nothing to sweep.[/]")
         return
 
-    merged = [(r, c) for r, c in plan if c.reason == "merged"]
-    stale = [(r, c) for r, c in plan if c.reason == "stale"]
+    merged = [p for p in plan if p[2].reason == "merged"]
+    squashed = [p for p in plan if p[2].reason == "squashed"]
+    unmerged = [p for p in plan if p[2].reason in ("gone", "stale")]
     console.print()
 
     if not force:
         console.print(
-            f"[dim]Dry run: {len(merged)} merged, {len(stale)} stale. Re-run with --force to delete.[/]"
+            f"[dim]Dry run: {len(merged) + len(squashed)} merged, {len(unmerged)} unmerged. "
+            "Re-run with --force to delete.[/]"
         )
         return
 
-    failed = 0
-    if merged and typer.confirm(f"Delete {count_branches(len(merged), 'merged')} with git branch -d?"):
-        failed += run_deletes(merged, force=False)
-    if stale and typer.confirm(
-        f"Force-delete {count_branches(len(stale), 'unmerged stale')} with git branch -D? Their commits will be lost.",
-        default=False,
-    ):
-        failed += run_deletes(stale, force=True)
+    # -d refuses squash-merged branches since they aren't ancestors of main, hence -D there
+    failed = confirm_and_delete(merged, f"Delete {count_branches(len(merged), 'merged')} with git branch -d?", False)
+    failed += confirm_and_delete(
+        squashed, f"Delete {count_branches(len(squashed), 'squash-merged')} with git branch -D?", True
+    )
+    failed += confirm_and_delete(
+        unmerged,
+        f"Force-delete {count_branches(len(unmerged), 'unmerged')} with git branch -D? Their commits will be lost.",
+        True,
+    )
     if failed:
         raise typer.Exit(1)

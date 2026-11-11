@@ -1,27 +1,17 @@
 # Contributing
 
-## Setup
-
 ```sh
-git clone https://github.com/ledermandaniel4-svg/Git-Janitor
-cd Git-Janitor
-python -m venv .venv && source .venv/bin/activate
+python -m venv .venv && . .venv/bin/activate
 pip install -e '.[dev]'
 pytest
 ```
 
-## Layout
+The tests create real repos in `tmp_path`. `tests/gitutil.py` has `run()` and `commit()`, which take a `days_ago` argument for faking old commits. `test_merge_detection.py` uses a bare repo plus a second clone to act as GitHub.
 
-- `src/git_janitor/scanner.py` finds repos and reads their state
-- `src/git_janitor/cleaner.py` decides which branches can go and deletes them
-- `src/git_janitor/cli.py` is the Typer app and all terminal output
-- `src/git_janitor/models.py` holds the dataclasses passed between them
+A few things I'd like to keep true:
 
-All Git access goes through `scanner.git()`, which shells out to the `git` binary. Please don't add a Git library dependency.
+- Git is called through `scanner.git()` with `subprocess`. No GitPython or similar.
+- Nothing gets deleted without `--force` and a prompt.
+- Output stays plain: a few colors, no emoji, no boxes.
 
-## Pull requests
-
-- Add a test for behavior changes. Tests build throwaway repos in `tmp_path`; see `tests/conftest.py` for the helpers, including backdated commits.
-- Anything that deletes data should stay behind a dry run by default and an explicit confirmation.
-- Keep output plain: short lines, a few colors, no emoji.
-- Add a line under "Unreleased" in `CHANGELOG.md`.
+If you change behavior, add a test and a line under Unreleased in `CHANGELOG.md`.

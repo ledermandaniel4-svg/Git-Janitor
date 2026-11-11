@@ -10,6 +10,7 @@ class Branch:
     name: str
     last_commit: datetime
     merged: bool = False
+    gone: bool = False  # upstream was deleted on the remote
 
     def age_days(self, now: datetime) -> int:
         return (now - self.last_commit).days
@@ -33,5 +34,5 @@ class RepoStatus:
 @dataclass
 class SweepCandidate:
     branch: Branch
-    reason: str  # "merged" or "stale"
+    reason: str  # merged, squashed, gone or stale
     age: int
