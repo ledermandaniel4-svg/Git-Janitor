@@ -28,6 +28,12 @@ Dry run: 2 merged, 1 unmerged. Re-run with --force to delete.
 Needs Python 3.10+ and `git`.
 
 ```sh
+pipx install git-janitor
+```
+
+Or straight from GitHub:
+
+```sh
 pipx install git+https://github.com/ledermandaniel4-svg/Git-Janitor
 ```
 

@@ -2,12 +2,9 @@
 
 ## Unreleased
 
-- `sweep` now finds squash- and rebase-merged branches, and branches whose remote was deleted.
-- `sweep --fetch` runs `git fetch --prune` in each repo first.
-- Merges are checked against `origin/main` as well as local `main`.
-- `scan` no longer counts `main`, `master` or `develop` as stale.
-- `scan` exits 0 when no repos are found, same as `scan --json`.
-
 ## 0.1.0 - 2026-11-10
 
-First version: `scan` and `sweep` with `--days`, `--json` and `--force`.
+- `scan`: find repos up to 3 levels deep and show the current branch, dirty files, unpushed commits and stale branches. Supports `--days` and `--json`.
+- `sweep`: list branches that are merged, squash- or rebase-merged, deleted on the remote, or stale. Dry run unless `--force`, and asks before deleting.
+- `sweep --fetch` runs `git fetch --prune` in each repo first.
+- Works as `git janitor`.
