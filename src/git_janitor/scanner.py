@@ -1,0 +1,121 @@
+from __future__ import annotations
+
+import os
+import subprocess
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Iterator
+
+from .models import Branch, RepoStatus
+
+SKIP_DIRS = {"node_modules", ".venv", "venv", "__pycache__"}
+BASE_BRANCHES = ("main", "master")
+
+
+def git(repo: Path, *args: str) -> str | None:
+    result = subprocess.run(
+        ["git", "-C", str(repo), *args],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.stdout.strip() if result.returncode == 0 else None
+
+
+def is_repo(path: Path) -> bool:
+    # .git is a file for worktrees and submodules
+    return (path / ".git").exists()
+
+
+def find_repos(root: Path, max_depth: int = 3) -> Iterator[Path]:
+    root = root.resolve()
+    if is_repo(root):
+        yield root
+        return
+    if max_depth <= 0:
+        return
+    try:
+        children = sorted(p for p in root.iterdir() if p.is_dir() and not p.is_symlink())
+    except PermissionError:
+        return
+    for child in children:
+        if child.name.startswith(".") or child.name in SKIP_DIRS:
+            continue
+        yield from find_repos(child, max_depth - 1)
+
+
+def current_branch(repo: Path) -> str:
+    # symbolic-ref works on an unborn branch too, so a fresh repo still reports its name
+    name = git(repo, "symbolic-ref", "--short", "-q", "HEAD")
+    if name:
+        return name
+    sha = git(repo, "rev-parse", "--short", "HEAD")
+    return f"(detached {sha})" if sha else "(unknown)"
+
+
+def dirty_count(repo: Path) -> int:
+    out = git(repo, "status", "--porcelain")
+    return len(out.splitlines()) if out else 0
+
+
+def unpushed_count(repo: Path) -> int | None:
+    if git(repo, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}") is None:
+        return None
+    out = git(repo, "rev-list", "--count", "@{u}..HEAD")
+    return int(out) if out else 0
+
+
+def base_branch(repo: Path) -> str | None:
+    for name in BASE_BRANCHES:
+        if git(repo, "rev-parse", "--verify", "-q", f"refs/heads/{name}") is not None:
+            return name
+    return None
+
+
+def merged_branches(repo: Path, base: str | None) -> set[str]:
+    if base is None:
+        return set()
+    out = git(repo, "branch", "--merged", base, "--format=%(refname:short)")
+    return set(out.splitlines()) if out else set()
+
+
+def list_branches(repo: Path) -> list[Branch]:
+    out = git(repo, "for-each-ref", "--format=%(refname:short)%00%(committerdate:unix)", "refs/heads")
+    if not out:
+        return []  # no commits yet
+    merged = merged_branches(repo, base_branch(repo))
+    branches = []
+    for line in out.splitlines():
+        name, _, ts = line.partition("\0")
+        when = datetime.fromtimestamp(int(ts), tz=timezone.utc)
+        branches.append(Branch(name=name, last_commit=when, merged=name in merged))
+    return branches
+
+
+def stale_branches(branches: list[Branch], days: int, now: datetime, skip: str = "") -> list[Branch]:
+    return [b for b in branches if b.name != skip and b.age_days(now) >= days]
+
+
+def display_name(repo: Path, root: Path) -> str:
+    root = root.resolve()
+    if repo == root:
+        return repo.name
+    return os.path.relpath(repo, root)
+
+
+def inspect(repo: Path, root: Path, days: int = 30, now: datetime | None = None) -> RepoStatus:
+    now = now or datetime.now(timezone.utc)
+    branch = current_branch(repo)
+    stale = stale_branches(list_branches(repo), days, now, skip=branch)
+    return RepoStatus(
+        name=display_name(repo, root),
+        path=repo,
+        branch=branch,
+        dirty=dirty_count(repo),
+        unpushed=unpushed_count(repo),
+        stale=[b.name for b in stale],
+    )
+
+
+def scan(root: Path, days: int = 30, now: datetime | None = None) -> list[RepoStatus]:
+    return [inspect(repo, root, days, now) for repo in find_repos(root)]
