@@ -1,5 +1,7 @@
 # git-janitor
 
+Claude used to debug
+
 Finds every Git repo under a directory, shows which ones have uncommitted or unpushed work, and cleans up branches that have already been merged.
 
 ```
