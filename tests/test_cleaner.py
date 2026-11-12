@@ -1,4 +1,5 @@
 import json
+import re
 
 from gitutil import commit, run
 from typer.testing import CliRunner
@@ -105,4 +106,5 @@ def test_worktrees_are_swept_once(tmp_path, make_repo):
 def test_short_help_flag():
     result = runner.invoke(app, ["sweep", "-h"])
     assert result.exit_code == 0
-    assert "--fetch" in result.output
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)  # CI forces color on
+    assert "--fetch" in plain
