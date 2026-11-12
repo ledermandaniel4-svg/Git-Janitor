@@ -63,6 +63,8 @@ git janitor sweep ~/code --fetch  # fetch --prune each repo first
 git janitor sweep ~/code --force  # actually delete, asks first
 ```
 
+Use `git janitor -h` for help. Git catches `--help` itself and looks for a man page, which doesn't exist for add-on commands (`git-janitor --help` works fine).
+
 `scan` skips `node_modules`, `.venv` and dot-directories. It stops at the first repo it finds on a path, so submodules and nested repos aren't listed separately.
 
 ### What sweep deletes
@@ -74,7 +76,7 @@ A local branch is a candidate if it's:
 - **remote branch deleted**: its upstream is gone, usually because the PR was closed
 - **stale**: no commits in `--days` days (default 30)
 
-`main`, `master`, `develop` and whatever you have checked out are never touched.
+`main`, `master`, `develop` and anything checked out, in this or any other worktree, are never touched. A repo with linked worktrees is only swept once.
 
 Merges are checked against both your local `main` and `origin/main`. If you merge PRs on GitHub and don't pull often, use `--fetch` so `origin/main` is current.
 

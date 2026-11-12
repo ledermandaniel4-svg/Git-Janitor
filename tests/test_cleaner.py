@@ -88,3 +88,21 @@ def test_scan_json(tmp_path, make_repo):
     assert repo["name"] == "api"
     assert repo["branch"] == "main"
     assert repo["dirty"] == 0
+
+
+def test_worktrees_are_swept_once(tmp_path, make_repo):
+    repo = make_repo("app")
+    run(repo, "branch", "done")
+    run(repo, "branch", "in-use")
+    run(repo, "worktree", "add", "-q", str(tmp_path / "app-wt"), "in-use")
+
+    result = runner.invoke(app, ["sweep", str(tmp_path)])
+
+    assert result.output.count("done") == 1
+    assert "in-use" not in result.output  # checked out in the other worktree
+
+
+def test_short_help_flag():
+    result = runner.invoke(app, ["sweep", "-h"])
+    assert result.exit_code == 0
+    assert "--fetch" in result.output

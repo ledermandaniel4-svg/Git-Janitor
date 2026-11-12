@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import typer
@@ -11,12 +12,14 @@ from rich.table import Table
 from . import __version__
 from .cleaner import candidates, delete, fetch
 from .models import RepoStatus, SweepCandidate
-from .scanner import display_name, find_repos, scan as scan_repos
+from .scanner import display_name, scan as scan_repos, unique_repos
 
 app = typer.Typer(
     help="Audit local Git repositories and clean up merged or stale branches.",
     add_completion=False,
     no_args_is_help=True,
+    # `git janitor --help` is intercepted by git (it looks for a man page), so offer -h
+    context_settings={"help_option_names": ["-h", "--help"]},
 )
 console = Console(highlight=False)
 err = Console(stderr=True, highlight=False)
@@ -125,12 +128,19 @@ def sweep(
     fetch_first: bool = typer.Option(False, "--fetch", help="Run git fetch --prune in each repo first."),
 ) -> None:
     """Find merged and stale branches under PATH. Dry run unless --force is given."""
+    def check(repo: Path) -> tuple[bool, list[SweepCandidate]]:
+        fetched = fetch(repo) if fetch_first else True
+        return fetched, candidates(repo, days)
+
+    repos = unique_repos(path)
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(check, repos))
+
     plan: Plan = []
-    for repo in find_repos(path):
+    for repo, (fetched, found) in zip(repos, results):
         name = display_name(repo, path)
-        if fetch_first and not fetch(repo):
+        if not fetched:
             err.print(f"[yellow]fetch failed[/] [dim]{name}, using local state[/]")
-        found = candidates(repo, days)
         if found:
             print_candidates(name, found)
             plan.extend((repo, name, c) for c in found)

@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .models import Branch, SweepCandidate
-from .scanner import PROTECTED, base_refs, current_branch, git, list_branches
+from .scanner import PROTECTED, base_refs, checked_out, current_branch, git, list_branches
 
 # commit-tree needs an identity even for a throwaway commit
 TEMP_IDENTITY = ("-c", "user.name=git-janitor", "-c", "user.email=git-janitor@localhost")
@@ -52,7 +52,7 @@ def classify(repo: Path, branch: Branch, refs: list[str], days: int, now: dateti
 
 def candidates(repo: Path, days: int = 30, now: datetime | None = None) -> list[SweepCandidate]:
     now = now or datetime.now(timezone.utc)
-    skip = PROTECTED | {current_branch(repo)}
+    skip = PROTECTED | {current_branch(repo)} | checked_out(repo)
     refs = base_refs(repo)
     found = []
     for branch in list_branches(repo):

@@ -45,6 +45,18 @@ def find_repos(root: Path, max_depth: int = 3) -> Iterator[Path]:
         yield from find_repos(child, max_depth - 1)
 
 
+def unique_repos(root: Path) -> list[Path]:
+    # Linked worktrees share branches with their main repo, so keep one path per repo
+    seen: set[Path] = set()
+    repos = []
+    for repo in find_repos(root):
+        key = common_dir(repo)
+        if key not in seen:
+            seen.add(key)
+            repos.append(repo)
+    return repos
+
+
 def current_branch(repo: Path) -> str:
     # symbolic-ref works on an unborn branch too, so a fresh repo still reports its name
     name = git(repo, "symbolic-ref", "--short", "-q", "HEAD")
@@ -52,6 +64,18 @@ def current_branch(repo: Path) -> str:
         return name
     sha = git(repo, "rev-parse", "--short", "HEAD")
     return f"(detached {sha})" if sha else "(unknown)"
+
+
+def checked_out(repo: Path) -> set[str]:
+    # Includes branches checked out in other worktrees, which git refuses to delete anyway
+    out = git(repo, "worktree", "list", "--porcelain") or ""
+    return {line.removeprefix("branch refs/heads/") for line in out.splitlines() if line.startswith("branch ")}
+
+
+def common_dir(repo: Path) -> Path:
+    # Same value for a repo and all of its linked worktrees
+    out = git(repo, "rev-parse", "--git-common-dir") or ".git"
+    return (repo / out).resolve()
 
 
 def dirty_count(repo: Path) -> int:
@@ -123,7 +147,7 @@ def display_name(repo: Path, root: Path) -> str:
 def inspect(repo: Path, root: Path, days: int = 30, now: datetime | None = None) -> RepoStatus:
     now = now or datetime.now(timezone.utc)
     branch = current_branch(repo)
-    stale = stale_branches(list_branches(repo), days, now, skip=PROTECTED | {branch})
+    stale = stale_branches(list_branches(repo), days, now, skip=PROTECTED | {branch} | checked_out(repo))
     return RepoStatus(
         name=display_name(repo, root),
         path=repo,
